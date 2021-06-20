@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# 'let' in global scope
+# let i=69
+
+# mismatched bracket
+# }

@@ -6,6 +6,7 @@
 # KNOWN LIMITATIONS/TODOS:
 # - invocations of local variables cannot be nested, e.g. '@{var%@{chop}}'.
 #   \-> The function has been made, now I must figure out the recursion.
+#   \-> FUCK imagine making recursion in a language that doesn't have locals oh my fucking god.
 # - functions cannot be cleanly declared inside of other functions due to the linear, stack-like storage of the scope.
 #   \-> I am planning so simply remove this problem by adding local functions.
 # - no error is reported when using 'let' without a proper initialization, e.g. 'let var'.
@@ -15,6 +16,10 @@
 #
 
 set -e
+
+LOCAL_IMPL="true"
+
+trap set INT
 
 lush_basename () {
     # thanks dylan :)
@@ -60,32 +65,76 @@ trim_str () {
     unset _trim_str_trim
 }
 
-mangle_vars () {
-    # $1: src, $2: mangle/context
-    _mangle_vars_out=""
-    _mangle_vars_tmp="$1"
-    while # do-while loop
-        case "$_mangle_vars_tmp" in *"@{"*"}"*) true;; *) false;; esac
-    do
-        _mangle_vars_before="${_mangle_vars_tmp%%@\{*\}*}"
-        _mangle_vars_after="${_mangle_vars_tmp#*@\{*\}}"
-        _mangle_vars_middle="${_mangle_vars_tmp#${_mangle_vars_before}}"
-        _mangle_vars_middle="${_mangle_vars_middle%${_mangle_vars_after}}"
-        _mangle_vars_tmp="$_mangle_vars_after"
-        _mangle_vars_inside="${_mangle_vars_middle#@\{}"
-        _mangle_vars_inside="${_mangle_vars_inside%\}}"
-        _mangle_vars_out="${_mangle_vars_out}${_mangle_vars_before}\${${2}_${_mangle_vars_inside}}"
-        _mangle_vars_tmp="$_mangle_vars_after"
-    done
-    if [ "$_mangle_vars_before" ]; then
-        printf '%s%s\n' "$_mangle_vars_out" "$_mangle_vars_after"
-    else
-        # just print the original source if no match was found
-        printf '%s\n' "$1"
-    fi
-    unset _mangle_vars_out _mangle_vars_tmp _mangle_vars_before \
-          _mangle_vars_after _mangle_vars_middle _mangle_vars_inside
-}
+if [ "$LOCAL_IMPL" ]; then
+    mangle_vars () {
+        # $1: src, $2: mangle/context
+        local out=""
+        local tmp="$1"
+        local before
+        local middle
+        local after
+        local inside
+        while # do-while loop
+            case "$tmp" in *"@{"*"}"*) true;; *) false;; esac
+        do
+            before="${tmp%%@\{*\}*}"
+            after="${tmp#*@\{*\}}"
+            middle="${tmp#${before}}"
+            middle="${middle%${after}}"
+            tmp="$after"
+            inside="${middle#@\{}"
+            inside="${inside%\}}"
+            # TODO: making this entire goddamn thing local hasn't fixed the recursion not working
+            #inside="$(mangle_vars "$inside" "$2")"
+            out="${out}${before}\${${2}_${inside}}"
+            tmp="$after"
+        done
+        if [ "$before" ]; then
+            printf '%s%s\n' "$out" "$after"
+        else
+            # just print the original source if no match was found
+            printf '%s\n' "$1"
+        fi
+    }
+else
+    #mangle_vars () {
+    #    # $1: src, $2: mangle/context
+    #    # OG implementation that does not support nesting of parameter expansions
+    #    _mangle_vars_out=""
+    #    _mangle_vars_tmp="$1"
+    #    while # do-while loop
+    #        case "$_mangle_vars_tmp" in *"@{"*"}"*) true;; *) false;; esac
+    #    do
+    #        _mangle_vars_before="${_mangle_vars_tmp%%@\{*\}*}"
+    #        _mangle_vars_after="${_mangle_vars_tmp#*@\{*\}}"
+    #        _mangle_vars_middle="${_mangle_vars_tmp#${_mangle_vars_before}}"
+    #        _mangle_vars_middle="${_mangle_vars_middle%${_mangle_vars_after}}"
+    #        _mangle_vars_tmp="$_mangle_vars_after"
+    #        _mangle_vars_inside="${_mangle_vars_middle#@\{}"
+    #        _mangle_vars_inside="${_mangle_vars_inside%\}}"
+    #        _mangle_vars_out="${_mangle_vars_out}${_mangle_vars_before}\${${2}_${_mangle_vars_inside}}"
+    #        _mangle_vars_tmp="$_mangle_vars_after"
+    #    done
+    #    if [ "$_mangle_vars_before" ]; then
+    #        printf '%s%s\n' "$_mangle_vars_out" "$_mangle_vars_after"
+    #    else
+    #        # just print the original source if no match was found
+    #        printf '%s\n' "$1"
+    #    fi
+    #    unset _mangle_vars_out _mangle_vars_tmp _mangle_vars_before \
+    #          _mangle_vars_after _mangle_vars_middle _mangle_vars_inside
+    #}
+    mangle_vars () {
+        # $1: src, $2: mangle/context
+        _mv_out=""
+        _mv_tmp="$1"
+        # URGENT TODO: do this complicated iterative solution
+        while
+            case "$_mv_tmp" in *"@{"*"}"*) true;; *) false;; esac
+        do
+        done
+    }
+fi
 
 compile_line () {
     trim="$(trim_str "$1")"
@@ -94,14 +143,28 @@ compile_line () {
             tab $nest; printf '%s\n' "$trim"
             scope_mangle="${scope_mangle}_${trim%% *}"
             nest=$((nest+1))
+
+            # cute little idea for named parameters in functions
+            # might add it in later
             #params="${line#*(}"
             #params="${params%)*}"
+
+            # compute name length by counting underscores
+            _cl_fname="${trim%% *}"
+            fnamelen=1 # deliberately starts at 1
+            while [ "$_cl_fname" ]; do
+                _cl_tail="${_cl_fname#?}"
+                _cl_head="${_cl_fname%${_cl_tail}}"
+                [ "$_cl_head" = "_" ] && fnamelen=$((fnamelen+1))
+                _cl_fname="${_cl_tail}"
+            done
             ;;
         "{") # simple scope
             tab $nest; printf '%s\n' "$trim"
             scope_mangle="${scope_mangle}_b${bscopes}"
             bscopes=$((bscopes+1))
             nest=$((nest+1))
+            fnamelen=1
             ;;
         "let "*) # local variable
             if [ $nest = 0 ]; then
@@ -118,12 +181,20 @@ compile_line () {
             fi
             ;;
         "}") # function/scope end
+            if [ $nest -le 0 ]; then
+                error "mismatched '}', nest level has gone negative" \
+                      "$lineno" "$trim"
+            fi
             if eval "[ \"\$mangles${nest}\" ]"; then
                 tab $nest; eval "printf '%s\\n' \"unset\${mangles${nest}}\""
                 eval "unset mangles${nest}"
             fi
             nest=$((nest-1))
-            scope_mangle="${scope_mangle%_*}"
+            _cpl_i=0
+            while [ $_cpl_i -lt $fnamelen ]; do
+                scope_mangle="${scope_mangle%_*}"
+                _cpl_i=$((_cpl_i+1))
+            done
             tab $nest; printf '%s\n' "$trim"
             ;;
         *)
@@ -137,6 +208,7 @@ lineno=1
 nest=0
 # what this variable starts as serves as the global prefix for all lush variables
 scope_mangle="_"
+fnamelen=0 # how many underscore-separated words are in the current function name
 bscopes=0 # keeps track of which non-function brackets we're in
 IFS=
 

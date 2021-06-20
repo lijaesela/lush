@@ -30,7 +30,7 @@ fn () {
 
 fn
 
-# stress-testing the compiler:
+# stress-testing the compiler for false positives:
 
 echo "--- multi-line commands ---"
 echo "words words and" \
@@ -54,3 +54,11 @@ add_numbers () {
     echo @{c}
 }
 add_numbers
+
+nested_variables () {
+    let file="name.suffix"
+    let trim=".suffix"
+    # this does not work as of now
+    echo @{file%@{trim}}
+}
+nested_variables
