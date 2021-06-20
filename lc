@@ -1,0 +1,168 @@
+#!/bin/sh
+
+#
+# lush shell compiler -- add local variables to POSIX shell!
+#
+# KNOWN LIMITATIONS/TODOS:
+# - invocations of local variables cannot be nested, e.g. '@{var%@{chop}}'.
+#   \-> The function has been made, now I must figure out the recursion.
+# - functions cannot be cleanly declared inside of other functions due to the linear, stack-like storage of the scope.
+#   \-> I am planning so simply remove this problem by adding local functions.
+# - no error is reported when using 'let' without a proper initialization, e.g. 'let var'.
+#   \-> There should be a simple regex that defines a POSIX variable initialization that I could check against.
+#
+
+set -e
+
+lush_basename () {
+    # thanks dylan :)
+    _lush_basename_dir=${1%${1##*[!/]}}
+    _lush_basename_dir=${_lush_basename_dir##*/}
+    printf '%s\n' "${_lush_basename_dir:-/}"
+}
+
+error () {
+    printf "\033[31merror:\033[m %s\n\033[32min line %s:\033[m %s\n" \
+           "$1" "$2" "$3" >&2
+    exit 1
+}
+
+tab () {
+    _tab_tabchar="    "
+    _tab_i=0
+    while [ $_tab_i -lt $1 ]; do
+        printf '%s' "$_tab_tabchar"
+        _tab_i=$((_tab_i+1))
+    done
+    unset _tab_tabchar _tab_i
+}
+
+is_in () {
+    # $1: item, $2: list, $3: delim
+    _is_in_oldifs="$IFS"
+    IFS="$3"
+    for item in $2; do
+        [ "$1" = "$item" ] && return 0
+    done
+    return 1
+    IFS="$_is_in_oldifs"
+    unset _is_in_oldifs
+}
+
+trim_str () {
+    # thanks dylan :)
+    _trim_str_trim=${1#${1%%[![:space:]]*}}
+    _trim_str_trim=${_trim_str_trim%${_trim_str_trim##*[![:space:]]}}
+    printf '%s\n' "$_trim_str_trim"
+    unset _trim_str_trim
+}
+
+mangle_vars () {
+    # $1: src, $2: mangle/context
+    _mangle_vars_out=""
+    _mangle_vars_tmp="$1"
+    while # do-while loop
+        case "$_mangle_vars_tmp" in *"@{"*"}"*) true;; *) false;; esac
+    do
+        _mangle_vars_before="${_mangle_vars_tmp%%@\{*\}*}"
+        _mangle_vars_after="${_mangle_vars_tmp#*@\{*\}}"
+        _mangle_vars_middle="${_mangle_vars_tmp#${_mangle_vars_before}}"
+        _mangle_vars_middle="${_mangle_vars_middle%${_mangle_vars_after}}"
+        _mangle_vars_tmp="$_mangle_vars_after"
+        _mangle_vars_inside="${_mangle_vars_middle#@\{}"
+        _mangle_vars_inside="${_mangle_vars_inside%\}}"
+        _mangle_vars_out="${_mangle_vars_out}${_mangle_vars_before}\${${2}_${_mangle_vars_inside}}"
+        _mangle_vars_tmp="$_mangle_vars_after"
+    done
+    if [ "$_mangle_vars_before" ]; then
+        printf '%s%s\n' "$_mangle_vars_out" "$_mangle_vars_after"
+    else
+        # just print the original source if no match was found
+        printf '%s\n' "$1"
+    fi
+    unset _mangle_vars_out _mangle_vars_tmp _mangle_vars_before \
+          _mangle_vars_after _mangle_vars_middle _mangle_vars_inside
+}
+
+compile_line () {
+    trim="$(trim_str "$1")"
+    case "$trim" in
+        [A-Za-z]*"("*")"*"{") # function declaration
+            tab $nest; printf '%s\n' "$trim"
+            scope_mangle="${scope_mangle}_${trim%% *}"
+            nest=$((nest+1))
+            #params="${line#*(}"
+            #params="${params%)*}"
+            ;;
+        "{") # simple scope
+            tab $nest; printf '%s\n' "$trim"
+            scope_mangle="${scope_mangle}_b${bscopes}"
+            bscopes=$((bscopes+1))
+            nest=$((nest+1))
+            ;;
+        "let "*) # local variable
+            if [ $nest = 0 ]; then
+                error "use of 'let' in global scope" \
+                      "$lineno" "$trim"
+            fi
+            def="${trim#'let '}"
+            tab $nest; printf '%s_%s\n' "$scope_mangle" "$(mangle_vars "$def" "$scope_mangle")"
+            if eval "is_in \"\${def%=*}\" \"\$locals${nest}\" \" \""; then
+                true
+            else
+                eval "locals${nest}=\"\${locals${nest}} \${def%=*}\""
+                eval "mangles${nest}=\"\${mangles${nest}} \${scope_mangle}_\${def%%=*}\""
+            fi
+            ;;
+        "}") # function/scope end
+            if eval "[ \"\$mangles${nest}\" ]"; then
+                tab $nest; eval "printf '%s\\n' \"unset\${mangles${nest}}\""
+                eval "unset mangles${nest}"
+            fi
+            nest=$((nest-1))
+            scope_mangle="${scope_mangle%_*}"
+            tab $nest; printf '%s\n' "$trim"
+            ;;
+        *)
+            tab $nest; printf '%s\n' "$(mangle_vars "$trim" "$scope_mangle")"
+            ;;
+    esac
+    lineno=$((lineno+1))
+}
+
+lineno=1
+nest=0
+# what this variable starts as serves as the global prefix for all lush variables
+scope_mangle="_"
+bscopes=0 # keeps track of which non-function brackets we're in
+IFS=
+
+if [ "$(lush_basename "$0")" = "lush" ]; then
+    # act like an interpreter if called as "lush"
+    for src in $@; do
+        while read -r line; do
+            compile_line "$line"
+        done < "$src" | sh -s
+    done
+else
+    # act like a compiler if called as anything else
+    while read -r line; do
+        compile_line "$line"
+    done
+fi
+
+
+# set
+
+: '
+# random fucking token parser I am not using
+IFS=
+while read line; do
+    while [ "$line" ]; do
+        token="${line%% *}"
+        echo "token: ${token}"
+        line="${line#$token}"
+        line=${line#${line%%[![:space:]]*}}
+    done
+done
+'

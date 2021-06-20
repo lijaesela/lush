@@ -1,0 +1,56 @@
+# a simple lush example, then some rigorous testing
+
+# global variables work as normal
+title="test"
+
+fn () {
+    echo "--- local variables ---"
+    
+    # after 'let', syntax is POSIX
+    let i="these are"
+    let j="local variables"
+    let x="declared in 'fn'"
+
+    {
+        let i="new scope"
+        echo @{i}
+        # set variables to new values just as you would declare them
+        let i="reinitializing"
+        echo @{i}
+    }
+
+    # use local variables by using '@' instead of '$'
+    echo @{i} @{j} @{x}
+
+    {
+        let j="another new scope"
+        echo @{j}
+    }
+}
+
+fn
+
+# stress-testing the compiler:
+
+echo "--- multi-line commands ---"
+echo "words words and" \
+     "even more words" \
+     "multi-line!"
+
+(echo "this is a subshell")
+
+string_operations () {
+    echo "--- string operations ---"
+    let str="one two three"
+    echo "this will only print:" @{str%% *}
+}
+string_operations
+
+add_numbers () {
+    echo "--- math ---"
+    let a=5
+    let b=6
+    let c=$(( @{a} + @{b} ))
+    echo @{c}
+}
+add_numbers
