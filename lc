@@ -10,6 +10,8 @@
 #   \-> I am planning so simply remove this problem by adding local functions.
 # - no error is reported when using 'let' without a proper initialization, e.g. 'let var'.
 #   \-> There should be a simple regex that defines a POSIX variable initialization that I could check against.
+# - only the (granted, more essential) "verbose" usage of variables is supported (@{var}), not the bracketless usage (@var).
+# - the "compile_line" function could do with a lot less global variables and some general refactoring.
 #
 
 set -e
@@ -19,6 +21,7 @@ lush_basename () {
     _lush_basename_dir=${1%${1##*[!/]}}
     _lush_basename_dir=${_lush_basename_dir##*/}
     printf '%s\n' "${_lush_basename_dir:-/}"
+    unset _lush_basename_dir
 }
 
 error () {
